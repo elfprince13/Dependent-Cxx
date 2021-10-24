@@ -736,6 +736,8 @@ namespace algebra {
 		
 		template<class Validator>
 		constexpr less_than<Zero, Result> operator()(typename less_than_or_equal_to<Right, Left>::strong lte_ev, Validator) const {
+			static_assert(CanValidate<Validator, Left>::value && CanValidate<Validator, Right>::value && CanValidate<Validator, Result>::value,
+						  "Left, Right, and Result must share a root with Validator, and can't contain recursion");
 			switch(lte_ev.index()) {
 				case 0: {
 					if constexpr (!std::is_same_v<Left, Right>) {
