@@ -9,4 +9,5 @@ find_package(Boost 1.73)
 
 #add_subdirectory(Cxx-Heterogeneous-Maps)
 add_executable(test-depend example/depend.cc)
+target_compile_options(test-depend PUBLIC -Wall -Wextra)
 target_link_libraries(test-depend LINK_PUBLIC Boost::boost) #static-hmap)

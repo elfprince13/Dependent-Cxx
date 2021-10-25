@@ -1,6 +1,7 @@
 #include <array>
 #include <iostream>
 #include <optional>
+#include <stdexcept>
 #include <string_view>
 #include <tuple>
 #include <typeinfo>
@@ -193,9 +194,9 @@ namespace detail {
 		 //*/
 	};
 }
-template<class CT, class P>
-constexpr auto pushContext(CT context, P p) {
-	return typename detail::PushContext<CT, P> ::type{};
+template<class ContextTag, class Push>
+constexpr auto pushContext(ContextTag, Push) {
+	return typename detail::PushContext<ContextTag, Push> ::type{};
 }
 
 namespace detail {
@@ -210,7 +211,8 @@ namespace detail {
 #define UNIQUE detail::Unique<__LINE__, __COUNTER__>
 #define FreshType(X) Fresh{pushContext(Context{},UNIQUE{}), X}
 #define RootFrame() using Context = ContextTag<UNIQUE>
-#define FreshFrame() using Context = typename detail::PushContext<ParentContext,UNIQUE>::type
+#define FreshTag() typename detail::PushContext<Context, UNIQUE>::type
+#define FreshFrame() using Context = typename detail::PushContext<ParentContext, UNIQUE>::type
 
 #define RefreshType(X) Fresh{pushContext(Context{},UNIQUE{}), X.v}
 
@@ -362,9 +364,11 @@ namespace algebra {
 	
 	
 	template<class Left, class Right>
-	struct less_than_or_equal_to; // forward declaration
+	class less_than_or_equal_to; // forward declaration
 	template<class Left, class Right>
 	struct equal_to; // forward declaration
+	template<class VarN, class VarNp1>
+	struct inductive_shift; // forward declaration
 	
 	template<class Deriving, class EvaluatesTo>
 	struct evaluates_to { protected: evaluates_to() = default; };
@@ -377,14 +381,24 @@ namespace algebra {
 		template<class Candidate, class Current, class Replace>
 		using ReplaceBase = std::conditional_t<std::is_base_of_v<Current, Candidate>, Replace, Candidate>;
 	public:
-		template<class Validator, class Current, class Replace>
+		template<class Current, class Replace, class Validator>
 		constexpr Deriving<ReplaceSame<Args, Current, Replace> ...>  replace(equal_to<Current, Replace>, Validator) {
-			return Deriving<ReplaceSame<Args, Current, Replace> ...>{};
+			static_assert(CanValidate<Validator, Current>::value && CanValidate<Validator, Replace>::value,
+						  "Validator must share root with terms and terms must not contain recursion");
+			return {};
 		}
 		
-		template<class Func, class Result>
-		constexpr Deriving<ReplaceBase<Args, evaluates_to<Func, Result>, Result> ...> replace(evaluates_to<Func, Result>) {
-			return Deriving<ReplaceBase<Args, evaluates_to<Func, Result>, Result> ...>{};
+		template<class Func, class Result, class Validator>
+		constexpr Deriving<ReplaceBase<Args, evaluates_to<Func, Result>, Result> ...> replace(evaluates_to<Func, Result>, Validator) {
+			// Todo: need to add validation here, but haven't figured out what that looks like for functions
+			return {};
+		}
+		
+		template<class VarN, class VarNp1, class ValN, class ValNp1, bool backward = false>
+		constexpr Deriving<ReplaceSame<Args, std::conditional_t<backward, VarNp1, VarN>, std::conditional_t<backward, VarN, VarNp1>>...> replace(const inductive_shift<VarN, VarNp1>&, ValN, ValNp1) {
+			static_assert(CanValidate<ValN,VarN>::value && CanValidate<ValNp1, VarNp1>::value,
+						  "Validators must share root with terms and terms must not contain recursion");
+			return {};
 		}
 	};
 	
@@ -399,7 +413,7 @@ namespace algebra {
 		*/
 		
 		template<class OLeft, class ORight>
-		friend class less_than;
+		friend struct less_than;
 		template<template<class ...Arg> class Deriving, class ...Args>
 		friend class function_of;
 	protected:
@@ -482,6 +496,20 @@ namespace algebra {
 	};
 	
 	
+	
+	template<class VarN, class VarNp1>
+	struct inductive_shift : private equal_to<VarN, VarNp1> {
+		inductive_shift(const inductive_shift<VarN, VarNp1>&) = delete;
+		inductive_shift(inductive_shift<VarN, VarNp1>&&) = delete;
+		inductive_shift& operator=(const inductive_shift<VarN, VarNp1>&) = delete;
+		inductive_shift& operator=(inductive_shift<VarN, VarNp1>&&) = delete;
+		
+		inductive_shift(VarN, VarNp1) {}
+	protected:
+		inductive_shift() = default;
+	};
+	
+	
 	template<class Deriving, class If, class Then>
 	struct implies {
 		constexpr Then operator()(If) const {
@@ -558,9 +586,9 @@ namespace algebra {
 			return Self{};
 		} else if(const auto eq_ev = equal_to<Left, Right>::apply(left, right, Validator{});
 				  std::nullopt == eq_ev) {
-			return *eq_ev;
-		} else {
 			return less_than<Right, Left>{};
+		} else {
+			return *eq_ev;
 		}
 	}
 	
@@ -679,7 +707,7 @@ namespace algebra {
 		
 	private:
 		FreshFrame();
-		using UniqueContext = typename detail::PushContext<Context, UNIQUE>::type;
+		using UniqueContext = FreshTag();
 	public:
 		Fresh<UniqueContext, decltype(std::declval<Left>().v + std::declval<Right>().v)> result;
 		
@@ -687,34 +715,34 @@ namespace algebra {
 		: result{UniqueContext{}, left.first.v / right.first.v} {}
 	};
 	
-	template<class ParentContext, class Left, class Right>
+	template<class _Context, class Left, class Right>
 	struct PosDivPredef {
-		using Context = typename detail::PushContext<ParentContext, UNIQUE>::type;
-		using UniqueContext = typename detail::PushContext<Context, UNIQUE>::type;
+		using Context = _Context;
+		using UniqueContext = FreshTag();
 		using Result = Fresh<UniqueContext, decltype(std::declval<Left>().v / std::declval<Right>().v)>;
 	};
 	
-	template<class ParentContext, class Left, class Right>
+	template<class _Context, class Left, class Right>
 	struct PositiveDivision
-	: PosDivPredef<ParentContext, Left, Right>
-	, monotonic<PositiveDivision<ParentContext, Left, Right>, Invariant, Increasing, Decreasing>
-	, implies<PositiveDivision<ParentContext, Left, Right>, equal_to<Left, Zero>, equal_to<typename PosDivPredef<ParentContext, Left, Right>::Result, Zero>>
-	, implies<PositiveDivision<ParentContext, Left, Right>, equal_to<Right, One>, equal_to<typename PosDivPredef<ParentContext, Left, Right>::Result, Left>>
-	, implies<PositiveDivision<ParentContext, Left, Right>, equal_to<Left, Right>, equal_to<typename PosDivPredef<ParentContext, Left, Right>::Result, One>>
-	, evaluates_to<PositiveDivision<ParentContext, Left, Right>, typename PosDivPredef<ParentContext, Left, Right>::Result> {
+	: PosDivPredef<_Context, Left, Right>
+	, monotonic<PositiveDivision<_Context, Left, Right>, Invariant, Increasing, Decreasing>
+	, implies<PositiveDivision<_Context, Left, Right>, equal_to<Left, Zero>, equal_to<typename PosDivPredef<_Context, Left, Right>::Result, Zero>>
+	, implies<PositiveDivision<_Context, Left, Right>, equal_to<Right, One>, equal_to<typename PosDivPredef<_Context, Left, Right>::Result, Left>>
+	, implies<PositiveDivision<_Context, Left, Right>, equal_to<Left, Right>, equal_to<typename PosDivPredef<_Context, Left, Right>::Result, One>>
+	, evaluates_to<PositiveDivision<_Context, Left, Right>, typename PosDivPredef<_Context, Left, Right>::Result> {
 	private:
-		using Predef = PosDivPredef<ParentContext, Left, Right>;
+		using Predef = PosDivPredef<_Context, Left, Right>;
 		using typename Predef::Context;
 		using typename Predef::UniqueContext;
 	public:
 		using typename Predef::Result;
 	
-		static_assert(detail::is_context_tag<ParentContext>::value, "Context must be context");
+		static_assert(detail::is_context_tag<Context>::value, "Context must be context");
 		static_assert(((is_constant<Left>::value || is_fresh<Left>::value) &&
 					   (is_constant<Right>::value || is_fresh<Right>::value)),
 					  "Can only divide fresh variables and constants");
-		using Self = PositiveDivision<ParentContext, Left, Right>;
-		using monotonic<PositiveDivision<ParentContext, Left, Right>, Invariant, Increasing, Decreasing>::operator();
+		using Self = PositiveDivision<Context, Left, Right>;
+		using monotonic<PositiveDivision<Context, Left, Right>, Invariant, Increasing, Decreasing>::operator();
 		using implies<Self, equal_to<Left, Zero>, equal_to<Result, Zero>>::operator();
 		using implies<Self, equal_to<Right, One>, equal_to<Result, Left>>::operator();
 		using implies<Self, equal_to<Left, Right>, equal_to<Result, One>>::operator();
@@ -738,30 +766,30 @@ namespace algebra {
 		constexpr less_than<Zero, Result> operator()(typename less_than_or_equal_to<Right, Left>::strong lte_ev, Validator) const {
 			static_assert(CanValidate<Validator, Left>::value && CanValidate<Validator, Right>::value && CanValidate<Validator, Result>::value,
 						  "Left, Right, and Result must share a root with Validator, and can't contain recursion");
-			switch(lte_ev.index()) {
-				case 0: {
-					if constexpr (!std::is_same_v<Left, Right>) {
-						less_than<Right, Left> lt_ev = std::get<0>(lte_ev);
-						using SneakyOne = PositiveDivision<Context, Left, Left>;
-						using S1R = typename SneakyOne::Result;
-						less_than_or_equal_to<SneakyOne, Self> lb1 = (*this)(SneakyOne{}, lt_ev(Validator{}), Validator{});
-						less_than_or_equal_to<S1R, Result> lb1_ = lb1.replace(SneakyOne{}).replace(Self{});
-						equal_to<S1R, One> s1i = SneakyOne{}(equal_to<Left,Left>(Left{}));
-						less_than_or_equal_to<One, Result> lb1__ = lb1_.replace(s1i, Validator{});
-						less_than<Zero, One> onePos{Zero{}, One{}};
-						
-						return less_than<Zero, One>(Zero{}, One{})(lb1__, Validator{});
-					} else {
-						// Silly compiler
-						[[fallthrough]];
-					}
-				}
-				case 1: {
-					equal_to<Right, Left> eq_ev = std::get<1>(lte_ev);
+			return std::visit([this](auto ev) constexpr -> less_than<Zero, Result> {
+				constexpr const bool trueEqual = std::is_same_v<equal_to<Right, Left>, decltype(ev)>;
+				constexpr const bool dumbCompilerEqual = std::is_same_v<Right, Left>;
+				if constexpr (trueEqual || dumbCompilerEqual) {
+					// These are the same. Need the extra check for exhaustiveness because the compiler doesn't know our axioms
+					equal_to<Right, Left> eq_ev = ([](auto ev) -> equal_to<Right, Left>{
+						if constexpr (trueEqual) { return ev; }
+						else if constexpr (dumbCompilerEqual){ return equal_to<Right, Left>{Left{}}; }
+					})(ev);
+									  
 					equal_to<One, Result>  one_ev = (*this)(eq_ev);
 					return less_than<Zero, One>(Zero{},One{}).replace(one_ev, Validator{});
+				} else {
+					// lt ev
+					less_than<Right, Left> lt_ev = ev;
+					using SneakyOne = PositiveDivision<FreshTag(), Left, Left>;
+					using S1R = typename SneakyOne::Result;
+					less_than_or_equal_to<SneakyOne, Self> lb1 = (*this)(SneakyOne{}, lt_ev(Validator{}), Validator{});
+					less_than_or_equal_to<S1R, Result> lb1_ = lb1.replace(SneakyOne{}, Validator{}).replace(Self{}, Validator{});
+					equal_to<S1R, One> s1i = SneakyOne{}(equal_to<Left,Left>(Left{}));
+					less_than_or_equal_to<One, Result> lb1__ = lb1_.replace(s1i, Validator{});
+					return less_than<Zero, One>(Zero{}, One{})(lb1__, Validator{});
 				}
-			}
+			}, lte_ev);
 		}
 	};
 }
@@ -777,13 +805,14 @@ auto bad() {
 	return FreshType(2);
 }
 
+/*
 template<class OldVar, class NewVar>
 class SubsetVariant {};
 
-template<class ...OldVars, class ...NewVars>
-class SubsetVariant<std::variant<OldVars...>,std::variant<NewVars...>> {
+template<class OldVarH, class ...OldVarTs, class ...NewVars>
+class SubsetVariant<std::variant<OldVarH, OldVarTs...>,std::variant<NewVars...>> {
 	template<class Head, class ...Tail>
-	inline std::variant<OldVars...> applyHelper(std::variant<NewVars...> input) {
+	inline static std::variant<OldVarH, OldVarTs...> applyHelper(std::variant<NewVars...> input) {
 		if(std::holds_alternative<Head>(input)) {
 			return std::get<Head>(input);
 		} else {
@@ -791,20 +820,18 @@ class SubsetVariant<std::variant<OldVars...>,std::variant<NewVars...>> {
 		}
 	}
 	
-	template<class ...N>
-	inline std::variant<OldVars...> applyHelper(std::variant<NewVars...> ) {
-		if constexpr (sizeof...(N) > 0) {
-			throw std::invalid_argument("");
-		} else {
-			return std::variant<OldVars...>();
-		}
+	template<class ...N, std::enable_if_t<sizeof...(N) == 0, bool> = true>
+	inline static std::variant<OldVarH, OldVarTs...> applyHelper(std::variant<NewVars...> ) {
+		static_assert(sizeof...(N) == 0);
+		return std::variant<OldVarH, OldVarTs...>(([]() -> OldVarH { throw std::logic_error("These don't overlap"); })());
 	}
 public:
 	
-	constexpr static std::variant<OldVars...> apply(std::variant<NewVars...> input) {
-		
+	constexpr static std::variant<OldVarH, OldVarTs...> apply(std::variant<NewVars...> input) {
+		return applyHelper<OldVarH, OldVarTs...>(input);
 	};
 };
+ */
 
 template<class ParentContext, class ReturnContext, class VarContext>
 /*struct Log2 {
@@ -812,7 +839,7 @@ template<class ParentContext, class ReturnContext, class VarContext>
 	static_assert(is_constant<Arg>::value || is_fresh<Arg>::value,
 				  "Can only log fresh variables and constants");
 private:
-	using Context = typename detail::PushContext<ParentContext, UNIQUE>::type;
+	FreshFrame();
 	
 };*/
 constexpr Fresh<ReturnContext, int> log2(Return<ReturnContext, int> rGen,
@@ -820,33 +847,44 @@ constexpr Fresh<ReturnContext, int> log2(Return<ReturnContext, int> rGen,
 										 algebra::less_than<Zero, decltype(var)> gt0) {
 	using namespace algebra;
 	FreshFrame();
-	if(auto compareEv = less_than<Two,decltype(var)>::full_compare(Two{}, var, Context{});
-	   std::holds_alternative<less_than<decltype(var),Two>>(compareEv)) {
-		// 0 < var < 2 -> var == 1
-		return std::move(rGen)(0);
-	} else {
-		using TwoIsPositive = less_than<Zero,Two>;
-		constexpr TwoIsPositive twP(Zero{}, Two{});
-		
-		using Divide = PositiveDivision<Context, decltype(var), Two>;
-		/****************************************
-		 * Given: 0 < var; 0 < 2; 1 < var
-		 * r = var / 2; (2 <= var) -> (r > 0)
-		 ****************************************/
-		Nonnegative<decltype(var)> numerator{var, gt0(Context{})};
-		Positive<Two> denominator{ Two{}, twP };
-		using strong_gte2 = typename less_than_or_equal_to<Two, decltype(var)>::strong;
-		auto gte2 = SubsetVariant<strong_gte2, decltype(compareEv)>::apply(compareEv);
-		
-		Divide nextArg;
-		auto newGT0 = nextArg(gte2, Context{});
-		auto nextReturn = log2<Context>(MakeReturn(int), nextArg(numerator, denominator), newGT0);
-		return std::move(rGen)(1 + nextReturn.v);
-	}
+	return std::visit([&](auto compareEv) constexpr -> Fresh<ReturnContext, int> {
+		if constexpr(std::is_same_v<decltype(compareEv), less_than<decltype(var),Two>>) {
+			// 0 < var < 2 -> var == 1
+			return std::move(rGen)(0);
+		} else {
+			using TwoIsPositive = less_than<Zero,Two>;
+			constexpr TwoIsPositive twP(Zero{}, Two{});
+			
+			using Divide = PositiveDivision<FreshTag(), decltype(var), Two>;
+			/****************************************
+			 * Given: 0 < var; 0 < 2; 1 < var
+			 * r = var / 2; (2 <= var) -> (r > 0)
+			 ****************************************/
+			Nonnegative<decltype(var)> numerator{var, gt0(Context{})};
+			Positive<Two> denominator{ Two{}, twP };
+			using strong_gte2 = typename less_than_or_equal_to<Two, decltype(var)>::strong;
+			constexpr strong_gte2 gte2{compareEv}; //SubsetVariant<strong_gte2, decltype(compareEv)>::apply(compareEv);
+			
+			Divide nextArg;
+			auto newVar = nextArg(numerator, denominator);
+			auto newGT0 = nextArg(gte2, Context{});
+			
+			using OldContext = Context;
+			{
+				RootFrame();
+				auto freshVar = RefreshType(newVar);
+				inductive_shift<decltype(newVar), decltype(freshVar)> shift_ev{newVar, freshVar};
+				
+				auto nextReturn = log2<Context>(MakeReturn(int), freshVar, newGT0.replace(shift_ev, OldContext{}, Context{}));
+				return std::move(rGen)(1 + nextReturn.v);
+			}
+		}
+	}, less_than<Two,decltype(var)>::full_compare(Two{}, var, Context{}));
 }
 
 int main(int argc, const char* argv[]) {
 	RootFrame();
+	/*
 	auto foo = FreshType(0);
 	auto bar = FreshType(1);
 	auto baz = inc<Context>(foo);
@@ -858,13 +896,14 @@ int main(int argc, const char* argv[]) {
 	std::cout << DEPEND_EQUIV(foo, baz) << std::endl;
 	//std::cout << DEPEND_EQUIV(bad(), bad()) << std::endl;
 	std::cout << DEPEND_EQUIV(RefreshType(bad()), RefreshType(bad())) << std::endl;
+	 */
 	auto v32 = FreshType(32);
 	if(auto proofPositive = algebra::less_than<Zero,decltype(v32)>::apply(Zero{}, v32, Context{});
 	   std::nullopt == proofPositive) {
+		std::cerr << "Can't take log of negative number" << std::endl;
+	} else {
 		auto logOf32 = log2<Context>(MakeReturn(int),v32,*proofPositive);
 		std::cout << "log_2(" << v32 << ") = " << logOf32 << std::endl;
-	} else {
-		std::cerr << "Can't take log of negative number" << std::endl;
 	}
 	return 0;
 }
