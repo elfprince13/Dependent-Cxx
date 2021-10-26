@@ -1,7 +1,8 @@
 #include <array>
 #include <iostream>
+#include <memory>
 #include <optional>
-#include <stdexcept>
+//#include <stdexcept>
 #include <string_view>
 #include <tuple>
 #include <typeinfo>
@@ -40,6 +41,8 @@ namespace detail {
 	}
 	 */
 }
+
+#define TYPEOF(X) std::decay_t<decltype(X)>
 
 template<class Root, class ...Trail> struct ContextTag {};
 template<class Root, class ...Trail>
@@ -83,7 +86,7 @@ template<class Tag, class V>
 struct is_fresh<Fresh<Tag,V>> { constexpr static const bool value = true; };
 
 template<auto V> struct Constant {
-	const decltype(V) v;
+	const TYPEOF(V) v;
 	constexpr Constant() : v(V) {}
 };
 
@@ -108,8 +111,10 @@ std::ostream& operator<<(std::ostream& out, const Constant<V>) {
 
 template<class Validator, class Term>
 class CanValidate {
-	static_assert(detail::is_context_tag<Validator>::value, "Validator must be a context tag");
-	static_assert(is_fresh<Term>::value || is_constant<Term>::value, "Term must be a context tag");
+	static_assert(detail::is_context_tag<std::decay_t<Validator>>::value, "Validator must be a context tag");
+	static_assert(is_fresh<std::decay_t<Term>>::value || is_constant<std::decay_t<Term>>::value, "Term must be a context tag");
+public:
+	constexpr static const bool value = CanValidate<std::decay_t<Validator>, std::decay_t<Term>>::value;
 };
 
 template<class Validator, auto V>
@@ -219,16 +224,16 @@ namespace detail {
 template<typename UniqueContext, typename V>
 class Return {
 	template<typename V_, typename ParentContext>
-	friend auto makeReturn(ParentContext);
+	friend constexpr auto makeReturn(ParentContext);
 	Return() = default;
 public:
-	Fresh<UniqueContext, V> operator()(V v) && {
+	constexpr Fresh<UniqueContext, V> operator()(V v) && {
 		return Fresh{UniqueContext{}, v};
 	}
 };
 
 template<typename V_, typename ParentContext>
-auto makeReturn(ParentContext) {
+constexpr auto makeReturn(ParentContext) {
 	FreshFrame();
 	return Return<Context, V_>{};
 }
@@ -382,20 +387,20 @@ namespace algebra {
 		using ReplaceBase = std::conditional_t<std::is_base_of_v<Current, Candidate>, Replace, Candidate>;
 	public:
 		template<class Current, class Replace, class Validator>
-		constexpr Deriving<ReplaceSame<Args, Current, Replace> ...>  replace(equal_to<Current, Replace>, Validator) {
+		constexpr Deriving<ReplaceSame<Args, Current, Replace> ...>  replace(equal_to<Current, Replace>, Validator) const {
 			static_assert(CanValidate<Validator, Current>::value && CanValidate<Validator, Replace>::value,
 						  "Validator must share root with terms and terms must not contain recursion");
 			return {};
 		}
 		
 		template<class Func, class Result, class Validator>
-		constexpr Deriving<ReplaceBase<Args, evaluates_to<Func, Result>, Result> ...> replace(evaluates_to<Func, Result>, Validator) {
+		constexpr Deriving<ReplaceBase<Args, evaluates_to<Func, Result>, Result> ...> replace(evaluates_to<Func, Result>, Validator) const {
 			// Todo: need to add validation here, but haven't figured out what that looks like for functions
 			return {};
 		}
 		
 		template<class VarN, class VarNp1, class ValN, class ValNp1, bool backward = false>
-		constexpr Deriving<ReplaceSame<Args, std::conditional_t<backward, VarNp1, VarN>, std::conditional_t<backward, VarN, VarNp1>>...> replace(const inductive_shift<VarN, VarNp1>&, ValN, ValNp1) {
+		constexpr Deriving<ReplaceSame<Args, std::conditional_t<backward, VarNp1, VarN>, std::conditional_t<backward, VarN, VarNp1>>...> replace(const inductive_shift<VarN, VarNp1>&, ValN, ValNp1) const {
 			static_assert(CanValidate<ValN,VarN>::value && CanValidate<ValNp1, VarNp1>::value,
 						  "Validators must share root with terms and terms must not contain recursion");
 			return {};
@@ -416,6 +421,8 @@ namespace algebra {
 		friend struct less_than;
 		template<template<class ...Arg> class Deriving, class ...Args>
 		friend class function_of;
+		template<class Deriving>
+		friend struct transitive;
 	protected:
 		using Self = less_than<Left, Right>;
 		constexpr less_than() = default;
@@ -447,10 +454,10 @@ namespace algebra {
 		
 		// transitive properties again:
 		template<class Validator, class RRight>
-		constexpr less_than<Left, RRight> operator()(less_than_or_equal_to<Right, RRight>, Validator);
+		constexpr less_than<Left, RRight> operator()(less_than_or_equal_to<Right, RRight>, Validator) const;
 		
 		template<class Validator, class LLeft>
-		constexpr less_than<LLeft, Right> operator()(less_than_or_equal_to<LLeft, Right>, Validator);
+		constexpr less_than<LLeft, Right> operator()(less_than_or_equal_to<LLeft, Right>, Validator) const;
 	};
 	
 	template<class Deriving, class If, class Then>
@@ -461,14 +468,17 @@ namespace algebra {
 	: protected transitive<equal_to<Left, Right>>
 	, protected commutative<equal_to<Left, Right>>
 	, protected function_of<equal_to, Left, Right> {
+		/*
 		static_assert(((is_constant<Left>::value || is_fresh<Left>::value) &&
 					   (is_constant<Right>::value || is_fresh<Right>::value)),
 					  "Can only compare fresh variables and constants");
-		
+		*/
 		
 		template<class Deriving, class If, class Then>
 		friend struct implies;
 		friend struct commutative<equal_to<Right, Left>>;
+		template<class Deriving, Dir ...dir>
+		friend class monotonic;
 		template<template<class ...Arg> class Deriving, class ...Args>
 		friend class function_of;
 	protected:
@@ -493,6 +503,9 @@ namespace algebra {
 		
 		template<class _Right = Right, std::enable_if_t<std::is_same_v<_Right, Left> && std::is_same_v<_Right, Right>, bool> = true>
 		constexpr equal_to(_Right) {}
+		
+		template<class Validator>
+		constexpr less_than_or_equal_to<Left, Right> operator()(Validator) const;
 	};
 	
 	
@@ -504,9 +517,9 @@ namespace algebra {
 		inductive_shift& operator=(const inductive_shift<VarN, VarNp1>&) = delete;
 		inductive_shift& operator=(inductive_shift<VarN, VarNp1>&&) = delete;
 		
-		inductive_shift(VarN, VarNp1) {}
+		constexpr inductive_shift(VarN, VarNp1) {}
 	protected:
-		inductive_shift() = default;
+		constexpr inductive_shift() = default;
 	};
 	
 	
@@ -539,6 +552,12 @@ namespace algebra {
 		using transitive<Self>::operator();
 		using function_of<less_than_or_equal_to, Left, Right>::replace;
 		
+		
+		
+		template<class Left_, class Right_, std::enable_if_t<(std::is_same_v<Left_,Left> && std::is_same_v<Right_,Right> &&
+															  is_constant<Left_>::value && is_constant<Right_>::value),bool> = true>
+		constexpr less_than_or_equal_to(Left_, Right_) { static_assert(Left{}.v <= Right{}.v, "Definition of less_than_or_equal_to");	}
+		
 		template<class Validator>
 		constexpr static std::optional<Self> apply(const Left& left, const Right& right, Validator) {
 			static_assert(CanValidate<Validator, Left>::value && CanValidate<Validator, Right>::value,
@@ -561,8 +580,8 @@ namespace algebra {
 		
 		template<class Validator, class _Left = Left, class _Right = Right,
 		         std::enable_if_t<(is_constant<_Left>::value &&
-								   std::is_integral_v<decltype(std::declval<_Left>().v)> &&
-								   std::is_integral_v<decltype(std::declval<_Right>().v)>), bool> = true>
+								   std::is_integral_v<TYPEOF(std::declval<_Left>().v)> &&
+								   std::is_integral_v<TYPEOF(std::declval<_Right>().v)>), bool> = true>
 		constexpr static Self apply(less_than<Constant<_Left{}.v - 1>, Right>, Validator) {
 			static_assert(CanValidate<Validator, Left>::value && CanValidate<Validator, Right>::value,
 						  "Validator must share root with terms and terms must not contain recursion");
@@ -573,6 +592,12 @@ namespace algebra {
 	template<class Left, class Right>
 	template<class Validator>
 	constexpr less_than_or_equal_to<Left, Right> less_than<Left, Right>::operator()(Validator v) const {
+		return less_than_or_equal_to<Left, Right>::apply(*this, v);
+	}
+	
+	template<class Left, class Right>
+	template<class Validator>
+	constexpr less_than_or_equal_to<Left, Right> equal_to<Left, Right>::operator()(Validator v) const {
 		return less_than_or_equal_to<Left, Right>::apply(*this, v);
 	}
 	
@@ -594,13 +619,13 @@ namespace algebra {
 	
 	template<class Left, class Right>
 	template<class Validator, class RRight>
-	constexpr less_than<Left, RRight> less_than<Left,Right>::operator()(less_than_or_equal_to<Right, RRight>, Validator) {
+	constexpr less_than<Left, RRight> less_than<Left,Right>::operator()(less_than_or_equal_to<Right, RRight>, Validator) const {
 		return {};
 	}
 	
 	template<class Left, class Right>
 	template<class Validator, class LLeft>
-	constexpr less_than<LLeft, Right> less_than<Left,Right>::operator()(less_than_or_equal_to<LLeft, Right>, Validator) {
+	constexpr less_than<LLeft, Right> less_than<Left,Right>::operator()(less_than_or_equal_to<LLeft, Right>, Validator) const {
 		return {};
 	}
 	
@@ -695,31 +720,54 @@ namespace algebra {
 	template<typename Val>
 	using Nonnegative = std::pair<Val, less_than_or_equal_to<Zero, Val>>;
 	
-	template<class ParentContext, class Left, class Right>
+	template<class _Context, class Left, class Right>
+	struct NNAddPredef {
+		using Context = _Context;
+		using UniqueContext = FreshTag();
+		using Result = Fresh<UniqueContext, TYPEOF(std::declval<Left>().v + std::declval<Right>().v)>;
+	};
+	
+	template<class _Context, class Left, class Right>
 	struct NonnegativeAddition
-	: monotonic<NonnegativeAddition<ParentContext, Left, Right>, Invariant, Increasing, Increasing> {
-		static_assert(::detail::is_context_tag<ParentContext>::value, "Context must be context");
+	: NNAddPredef<_Context, Left, Right>
+	//, commutative<typename tbind<NonnegativeAddition, _Context, _TP<0>, _TP<1>>::template ttype<Left, Right>>
+	, monotonic<NonnegativeAddition<_Context, Left, Right>, Invariant, Increasing, Increasing>
+	, evaluates_to<NonnegativeAddition<_Context, Left, Right>, typename NNAddPredef<_Context, Left, Right>::Result>
+	, implies<NonnegativeAddition<_Context, Left, Right>, equal_to<Left, Zero>, equal_to<typename NNAddPredef<_Context, Left, Right>::Result, Right>>
+	/*, implies<NonnegativeAddition<_Context, Left, Right>, equal_to<Right, Zero>, equal_to<typename NNAddPredef<_Context, Left, Right>::Result, Left>>*/ {
+		using Predef = NNAddPredef<_Context, Left, Right>;
+		using typename Predef::Context;
+		using typename Predef::UniqueContext;
+	public:
+		using typename Predef::Result;
+		
+		static_assert(::detail::is_context_tag<Context>::value, "Context must be context");
 		static_assert(((is_constant<Left>::value || is_fresh<Left>::value) &&
 					   (is_constant<Right>::value || is_fresh<Right>::value)),
 					  "Can only divide fresh variables and constants");
 		
-		using monotonic<NonnegativeAddition<ParentContext, Left, Right>, Invariant, Increasing, Increasing>::operator();
+		using monotonic<NonnegativeAddition<Context, Left, Right>, Invariant, Increasing, Increasing>::operator();
+		//using commutative<typename tbind<NonnegativeAddition, _Context, _TP<0>, _TP<1>>::template ttype<Left, Right>>::operator();
 		
-	private:
-		FreshFrame();
-		using UniqueContext = FreshTag();
+		using implies<NonnegativeAddition<_Context, Left, Right>, equal_to<Left, Zero>, equal_to<typename NNAddPredef<_Context, Left, Right>::Result, Right>>::operator();
+		//using implies<NonnegativeAddition<_Context, Left, Right>, equal_to<Right, Zero>, equal_to<typename NNAddPredef<_Context, Left, Right>::Result, Left>>::operator();
 	public:
-		Fresh<UniqueContext, decltype(std::declval<Left>().v + std::declval<Right>().v)> result;
+		constexpr NonnegativeAddition(less_than_or_equal_to<Zero, Left>, less_than_or_equal_to<Zero, Right>) {
+			static_assert(CanValidate<Context, Left>::value &&
+						  CanValidate<Context, Right>::value,
+						  "Validator must share root with terms and terms must not contain recursion");
+		}
 		
-		constexpr NonnegativeAddition(Context, Positive<Left> left, Positive<Right> right)
-		: result{UniqueContext{}, left.first.v / right.first.v} {}
+		constexpr Result operator()(Nonnegative<Left> left, Nonnegative<Right> right) const {
+			return {UniqueContext{}, left.first.v + right.first.v};
+		}
 	};
 	
 	template<class _Context, class Left, class Right>
 	struct PosDivPredef {
 		using Context = _Context;
 		using UniqueContext = FreshTag();
-		using Result = Fresh<UniqueContext, decltype(std::declval<Left>().v / std::declval<Right>().v)>;
+		using Result = Fresh<UniqueContext, TYPEOF(std::declval<Left>().v / std::declval<Right>().v)>;
 	};
 	
 	template<class _Context, class Left, class Right>
@@ -747,27 +795,28 @@ namespace algebra {
 		using implies<Self, equal_to<Right, One>, equal_to<Result, Left>>::operator();
 		using implies<Self, equal_to<Left, Right>, equal_to<Result, One>>::operator();
 		
-		constexpr PositiveDivision() {
-			static_assert(CanValidate<Context, typename Nonnegative<Left>::first_type>::value &&
-						  CanValidate<Context, typename Positive<Right>::first_type>::value,
+		constexpr PositiveDivision(less_than_or_equal_to<Zero, Left>, less_than<Zero, Right>) {
+			static_assert(CanValidate<Context, Left>::value &&
+						  CanValidate<Context, Right>::value,
 						  "Validator must share root with terms and terms must not contain recursion");
 		}
 		
 		constexpr Result operator()(Nonnegative<Left> left, Positive<Right> right) const {
 			return {UniqueContext{}, left.first.v / right.first.v};
 		}
-		
+		/*
+		 // monotonicity exercise for later
 		template<class Validator>
 		constexpr less_than<Result, Left> operator()(less_than<One, Right>, Validator) const {
 			return {};
 		}
-		
+		*/
 		template<class Validator>
-		constexpr less_than<Zero, Result> operator()(typename less_than_or_equal_to<Right, Left>::strong lte_ev, Validator) const {
+		constexpr less_than<Zero, Result> operator()(less_than_or_equal_to<Zero, Left> l_nn_ev, less_than<Zero, Right> r_pos_ev, typename less_than_or_equal_to<Right, Left>::strong lte_ev, Validator) const {
 			static_assert(CanValidate<Validator, Left>::value && CanValidate<Validator, Right>::value && CanValidate<Validator, Result>::value,
 						  "Left, Right, and Result must share a root with Validator, and can't contain recursion");
-			return std::visit([this](auto ev) constexpr -> less_than<Zero, Result> {
-				constexpr const bool trueEqual = std::is_same_v<equal_to<Right, Left>, decltype(ev)>;
+			return std::visit([=](auto ev) constexpr -> less_than<Zero, Result> {
+				constexpr const bool trueEqual = std::is_same_v<equal_to<Right, Left>, TYPEOF(ev)>;
 				constexpr const bool dumbCompilerEqual = std::is_same_v<Right, Left>;
 				if constexpr (trueEqual || dumbCompilerEqual) {
 					// These are the same. Need the extra check for exhaustiveness because the compiler doesn't know our axioms
@@ -780,12 +829,22 @@ namespace algebra {
 					return less_than<Zero, One>(Zero{},One{}).replace(one_ev, Validator{});
 				} else {
 					// lt ev
-					less_than<Right, Left> lt_ev = ev;
+					constexpr less_than<Right, Left> lt_ev = ev;
+					// left pos ev
+					less_than<Zero, Left> l_pos_ev = r_pos_ev(lt_ev, Validator{});
 					using SneakyOne = PositiveDivision<FreshTag(), Left, Left>;
+					constexpr SneakyOne sneakyOne{l_nn_ev, l_pos_ev};
 					using S1R = typename SneakyOne::Result;
-					less_than_or_equal_to<SneakyOne, Self> lb1 = (*this)(SneakyOne{}, lt_ev(Validator{}), Validator{});
-					less_than_or_equal_to<S1R, Result> lb1_ = lb1.replace(SneakyOne{}, Validator{}).replace(Self{}, Validator{});
-					equal_to<S1R, One> s1i = SneakyOne{}(equal_to<Left,Left>(Left{}));
+					auto lte_ev = (*this)(sneakyOne, lt_ev(Validator{}), Validator{});
+					less_than_or_equal_to<SneakyOne, Self> lb1 = ([=](auto lte_ev) constexpr -> less_than_or_equal_to<SneakyOne, Self> {
+						if constexpr (std::is_same_v<TYPEOF(lte_ev), less_than_or_equal_to<SneakyOne, Self>>) {
+							return lte_ev;
+						} else /*if constexpr (std::is_same_v<TYPEOF(lte_ev), equal_to<SneakyOne, Self>>)*/ {
+							return lte_ev(Validator{});
+						}
+					})(lte_ev);
+					less_than_or_equal_to<S1R, Result> lb1_ = lb1.replace(sneakyOne, Validator{}).replace(*this, Validator{});
+					equal_to<S1R, One> s1i = sneakyOne(equal_to<Left,Left>(Left{})/*, Validator{}*/); // haven't figured out function validation yes
 					less_than_or_equal_to<One, Result> lb1__ = lb1_.replace(s1i, Validator{});
 					return less_than<Zero, One>(Zero{}, One{})(lb1__, Validator{});
 				}
@@ -803,6 +862,98 @@ auto inc(Fresh<VarContext, int> var) {
 auto bad() {
 	RootFrame();
 	return FreshType(2);
+}
+
+namespace collections {
+	template<class Context, class Elem, class Length>
+	class Array {
+		static_assert(is_fresh<Length>::value || is_constant<Length>::value,
+					  "Length must be fresh, or constant");
+		std::unique_ptr<Elem[]> data_;
+		algebra::Nonnegative<Length> length_;
+		
+	public:
+		
+		/*
+		template<class Dummy=bool>
+		Array()
+		{
+			static_assert(is_constant<Length>::value,
+						  "Can only default initialize a constant-length array");
+			
+			
+		}
+		*/
+		 
+		template<class Idx>
+		using LowerBound = algebra::less_than_or_equal_to<Zero, Idx>;
+		template<class Idx>
+		using UpperBound = algebra::less_than<Idx, Length>;
+		
+		template<class Idx>
+		using Bounded = std::tuple<Idx, LowerBound<Idx>, UpperBound<Idx>>;
+		
+		Array(Length len, LowerBound<Length> ev)
+		: data_(new Elem[len.v])
+		, length_{len, ev} {
+			static_assert(CanValidate<Context, Length>::value,
+						  "Validator must share root with terms and terms must not contain recursion");
+		}
+		
+		algebra::Nonnegative<Length> length() const {
+			return length_;
+		}
+		
+		size_t size() const {
+			return length_.first.v;
+		}
+		
+		template<class Idx, std::enable_if_t<is_fresh<Length>::value || is_constant<Length>::value, bool> = true>
+		Elem& operator[](const Bounded<Idx>& idx) {
+			return data_[std::get<0>(idx).v];
+		}
+		
+		template<class Idx, std::enable_if_t<is_fresh<Length>::value || is_constant<Length>::value, bool> = true>
+		const Elem& operator[](const Bounded<Idx>& idx) const {
+			return data_[std::get<0>(idx).v];
+		}
+		
+		auto begin() const {
+			return data_.get();
+		}
+		
+		auto end() const {
+			return begin() + size();
+		}
+		
+		auto begin() {
+			return data_.get();
+		}
+		
+		auto end() {
+			return begin() + size();
+		}
+	};
+	
+	template<class Context, class Elem,
+	         class ContextL, class LengthL,
+			 class ContextR, class LengthR, class Sum = algebra::NonnegativeAddition<FreshTag(), LengthL, LengthR>>
+	auto concatenate(const Array<ContextL, Elem, LengthL>& left, const Array<ContextR, Elem, LengthR>& right)
+	-> std::pair<Array<FreshTag(), Elem, typename Sum::Result>, algebra::equal_to<Sum, typename Sum::Result>>
+	{
+		auto [lLen, l_nn_ev] = left.length();
+		auto [rLen, r_nn_ev] = right.length();
+		Sum sum{l_nn_ev, r_nn_ev};
+		typename Sum::Result nLen = sum(left.length(), right.length());
+		
+		constexpr algebra::less_than_or_equal_to<Zero, Zero> z_nn_ev{Zero{}, Zero{}};
+		using SneakyZero = algebra::NonnegativeAddition<FreshTag(), Zero, Zero>;
+		constexpr SneakyZero sneakyZero{z_nn_ev, z_nn_ev};
+		auto n_nn_ev = sum(sneakyZero, l_nn_ev, Context{});
+		
+		
+		//algebra::less_than_or_equal_to<Zero, >
+	}
 }
 
 /*
@@ -844,42 +995,42 @@ private:
 };*/
 constexpr Fresh<ReturnContext, int> log2(Return<ReturnContext, int> rGen,
 										 Fresh<VarContext, int> var,
-										 algebra::less_than<Zero, decltype(var)> gt0) {
+										 algebra::less_than<Zero, TYPEOF(var)> gt0) {
 	using namespace algebra;
 	FreshFrame();
-	return std::visit([&](auto compareEv) constexpr -> Fresh<ReturnContext, int> {
-		if constexpr(std::is_same_v<decltype(compareEv), less_than<decltype(var),Two>>) {
+	return std::visit([rGen=std::move(rGen),var=var,gt0=gt0](auto compareEv) mutable constexpr -> Fresh<ReturnContext, int> {
+		if constexpr(std::is_same_v<TYPEOF(compareEv), less_than<TYPEOF(var),Two>>) {
 			// 0 < var < 2 -> var == 1
 			return std::move(rGen)(0);
 		} else {
 			using TwoIsPositive = less_than<Zero,Two>;
 			constexpr TwoIsPositive twP(Zero{}, Two{});
 			
-			using Divide = PositiveDivision<FreshTag(), decltype(var), Two>;
+			using Divide = PositiveDivision<FreshTag(), TYPEOF(var), Two>;
 			/****************************************
 			 * Given: 0 < var; 0 < 2; 1 < var
 			 * r = var / 2; (2 <= var) -> (r > 0)
 			 ****************************************/
-			Nonnegative<decltype(var)> numerator{var, gt0(Context{})};
-			Positive<Two> denominator{ Two{}, twP };
-			using strong_gte2 = typename less_than_or_equal_to<Two, decltype(var)>::strong;
-			constexpr strong_gte2 gte2{compareEv}; //SubsetVariant<strong_gte2, decltype(compareEv)>::apply(compareEv);
+			const Nonnegative<TYPEOF(var)> numerator{var, gt0(Context{})};
+			constexpr Positive<Two> denominator{ Two{}, twP };
+			using strong_gte2 = typename less_than_or_equal_to<Two, TYPEOF(var)>::strong;
+			constexpr strong_gte2 gte2{compareEv};
 			
-			Divide nextArg;
-			auto newVar = nextArg(numerator, denominator);
-			auto newGT0 = nextArg(gte2, Context{});
+			Divide nextArg(numerator.second, denominator.second);
+			const auto newVar = nextArg(numerator, denominator);
+			constexpr auto newGT0 = nextArg(gt0(Context{}), twP, gte2, Context{});
 			
 			using OldContext = Context;
 			{
 				RootFrame();
-				auto freshVar = RefreshType(newVar);
-				inductive_shift<decltype(newVar), decltype(freshVar)> shift_ev{newVar, freshVar};
+				const auto freshVar = RefreshType(newVar);
+				constexpr inductive_shift<TYPEOF(newVar), TYPEOF(freshVar)> shift_ev{TYPEOF(newVar){}, TYPEOF(freshVar){}};
 				
 				auto nextReturn = log2<Context>(MakeReturn(int), freshVar, newGT0.replace(shift_ev, OldContext{}, Context{}));
 				return std::move(rGen)(1 + nextReturn.v);
 			}
 		}
-	}, less_than<Two,decltype(var)>::full_compare(Two{}, var, Context{}));
+	}, less_than<Two,TYPEOF(var)>::full_compare(Two{}, var, Context{}));
 }
 
 int main(int argc, const char* argv[]) {
@@ -897,13 +1048,25 @@ int main(int argc, const char* argv[]) {
 	//std::cout << DEPEND_EQUIV(bad(), bad()) << std::endl;
 	std::cout << DEPEND_EQUIV(RefreshType(bad()), RefreshType(bad())) << std::endl;
 	 */
-	auto v32 = FreshType(32);
-	if(auto proofPositive = algebra::less_than<Zero,decltype(v32)>::apply(Zero{}, v32, Context{});
-	   std::nullopt == proofPositive) {
+	constexpr auto v32 = FreshType(32);
+	if constexpr (constexpr auto proofPositive = algebra::less_than<Zero,TYPEOF(v32)>::apply(Zero{}, v32, Context{});
+				  std::nullopt == proofPositive) {
 		std::cerr << "Can't take log of negative number" << std::endl;
 	} else {
-		auto logOf32 = log2<Context>(MakeReturn(int),v32,*proofPositive);
+		constexpr algebra::less_than<Zero,TYPEOF(v32)> lt_ev{*proofPositive};
+		constexpr auto logOf32 = log2<Context>(MakeReturn(int), v32, lt_ev);
 		std::cout << "log_2(" << v32 << ") = " << logOf32 << std::endl;
+		constexpr algebra::less_than_or_equal_to<Zero, TYPEOF(v32)> lte_ev{lt_ev(Context{})};
+		
+		
+		collections::Array<FreshTag(), float, TYPEOF(v32)> a32(v32, lte_ev);
+		
+		constexpr Constant<64> SixtyFour;
+		constexpr algebra::less_than_or_equal_to<Zero, TYPEOF(SixtyFour)> sixty_four_nn{Zero{}, SixtyFour};
+		collections::Array<FreshTag(), float, TYPEOF(SixtyFour)> a64(SixtyFour, sixty_four_nn);
+		
+		//auto a96{collections::concatenate<FreshTag()>(a64, a32)};
+		
 	}
 	return 0;
 }
