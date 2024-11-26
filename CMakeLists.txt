@@ -14,7 +14,9 @@ target_sources(dependent-cxx INTERFACE
  ${base_path}/core-io.hpp
  )
 target_include_directories(dependent-cxx INTERFACE ${dependent_cxx_INCLUDE_DIR})
-target_compile_options(dependent-cxx INTERFACE -Wall -Wextra)
+target_compile_options(dependent-cxx INTERFACE
+    $<$<CXX_COMPILER_ID:MSVC>:/W4>
+    $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wall -Wextra>)
 
 
 add_subdirectory(example)

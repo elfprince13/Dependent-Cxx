@@ -1,10 +1,12 @@
 #pragma once
 
+#include <cstddef>
 #include <tuple>
 #include <type_traits>
 
 namespace dependent_cxx {
-
+    using size_t = std::size_t;
+    
     namespace detail {
         template<size_t ...Nums>
         struct Unique {};

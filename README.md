@@ -4,8 +4,10 @@ Deeply cursed experimental library that allocates a unique type for every variab
 
 This is a proof of concept.
 Things may be broken, undocumented, or not work as advertised.
+Currently only works in Clang.
 
 Happy to accept PRs to make things better, especially:
 - test suite
 - cleaning up the algebra library
 - finish the array demo
+- getting either GCC or MSVC to actually compile it.

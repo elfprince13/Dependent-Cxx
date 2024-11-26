@@ -3,6 +3,7 @@
 #include <optional>
 #include <tuple>
 #include <type_traits>
+#include <variant>
 
 #include <dependent-cxx/core.hpp>
 
@@ -245,7 +246,7 @@ namespace dependent_cxx {
             friend struct implies;
             friend struct commutative<equal_to<Right, Left>>;
             template<class Deriving, Dir ...dir>
-            friend class monotonic;
+            friend struct monotonic;
             template<template<class ...Arg> class Deriving, class ...Args>
             friend class function_of;
         protected:
@@ -309,7 +310,7 @@ namespace dependent_cxx {
                         "Can only compare fresh variables and constants");
             */
             template<class Deriving, Dir ...dir> 
-            friend class monotonic;
+            friend struct monotonic;
             template<template<class ...Arg> class Deriving, class ...Args>
             friend class function_of;
         protected:
