@@ -3,10 +3,18 @@ cmake_minimum_required(VERSION 3.13.5)
 set(CMAKE_CXX_STANDARD 17)
 project(Dependent-Cxx)
 
-set(DEPND_INCLUDE_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/include)
-set(DEPND_LIBRARY_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/lib)
-find_package(Boost 1.73)
+set(dependent_cxx_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/include)
+set(base_path ${dependent_cxx_INCLUDE_DIR}/dependent-cxx)
 
-add_executable(test-depend example/depend.cc)
-target_compile_options(test-depend PUBLIC -Wall -Wextra)
-target_link_libraries(test-depend LINK_PUBLIC Boost::boost) #static-hmap)
+add_library(dependent-cxx INTERFACE)
+target_sources(dependent-cxx INTERFACE
+ ${base_path}/algebra.hpp
+ ${base_path}/array.hpp
+ ${base_path}/core.hpp
+ ${base_path}/core-io.hpp
+ )
+target_include_directories(dependent-cxx INTERFACE ${dependent_cxx_INCLUDE_DIR})
+target_compile_options(dependent-cxx INTERFACE -Wall -Wextra)
+
+
+add_subdirectory(example)
