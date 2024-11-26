@@ -16,30 +16,12 @@ namespace detail {
 	template<size_t ...Nums>
 	struct Unique {};
 
-	/*
-	template<class CL, class ...TPs>
-	struct TypeParamCharList {
-		template<size_t ...VPs>
-		struct ValueParamCharList {};
-	};
-	*/
-
 	template<size_t ...Nums>
 	std::ostream& operator<<(std::ostream& out, Unique<Nums...>) {
 		out <<"Unique<";
 		(..., (out << Nums << ","));
 		return out << ">";
 	}
-	/*
-	template<class CL, class ...TPs, size_t ...VPs>
-	std::ostream& operator<<(std::ostream& out, typename TypeParamCharList<CL, TPs...>::template ValueParamCharList<VPs...>) {
-		out << "<" << CL{};
-		(... , (out << ", " << typeid(TPs).name()));
-		out << ">::<";
-		(... , (out << VPs << ","));
-		return out << ">";
-	}
-	 */
 }
 
 #define TYPEOF(X) std::decay_t<decltype(X)>
@@ -985,14 +967,6 @@ public:
  */
 
 template<class ParentContext, class ReturnContext, class VarContext>
-/*struct Log2 {
-	static_assert(detail::is_context_tag<ParentContext>::value, "ParentContext must be context");
-	static_assert(is_constant<Arg>::value || is_fresh<Arg>::value,
-				  "Can only log fresh variables and constants");
-private:
-	FreshFrame();
-	
-};*/
 constexpr Fresh<ReturnContext, int> log2(Return<ReturnContext, int> rGen,
 										 Fresh<VarContext, int> var,
 										 algebra::less_than<Zero, TYPEOF(var)> gt0) {
@@ -1035,7 +1009,7 @@ constexpr Fresh<ReturnContext, int> log2(Return<ReturnContext, int> rGen,
 
 int main(int argc, const char* argv[]) {
 	RootFrame();
-	/*
+	//*
 	auto foo = FreshType(0);
 	auto bar = FreshType(1);
 	auto baz = inc<Context>(foo);
@@ -1047,7 +1021,7 @@ int main(int argc, const char* argv[]) {
 	std::cout << DEPEND_EQUIV(foo, baz) << std::endl;
 	//std::cout << DEPEND_EQUIV(bad(), bad()) << std::endl;
 	std::cout << DEPEND_EQUIV(RefreshType(bad()), RefreshType(bad())) << std::endl;
-	 */
+	//*/
 	constexpr auto v32 = FreshType(32);
 	if constexpr (constexpr auto proofPositive = algebra::less_than<Zero,TYPEOF(v32)>::apply(Zero{}, v32, Context{});
 				  std::nullopt == proofPositive) {
